@@ -5,8 +5,8 @@ import android.app.Application
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
-import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -19,6 +19,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -31,22 +32,27 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
-import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
-import androidx.navigation.navArgument
 import com.kenway.robin.data.AppDatabase
 import com.kenway.robin.data.ImageRepository
 import com.kenway.robin.ui.organizer.OrganizerScreen
 import com.kenway.robin.ui.theme.RobinTheme
 import com.kenway.robin.viewmodel.OrganizerViewModel
+import com.kenway.robin.viewmodel.SharedViewModel
 
-class ViewModelFactory(private val application: Application, private val imageRepository: ImageRepository) : ViewModelProvider.Factory {
+private const val TAG = "MainActivity"
+
+// This factory is now specific to OrganizerViewModel and will be created on-the-fly
+class OrganizerViewModelFactory(
+    private val application: Application,
+    private val imageRepository: ImageRepository
+) : ViewModelProvider.Factory {
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         if (modelClass.isAssignableFrom(OrganizerViewModel::class.java)) {
             @Suppress("UNCHECKED_CAST")
-            return OrganizerViewModel(imageRepository, application) as T
+            return OrganizerViewModel(application, imageRepository) as T
         }
         throw IllegalArgumentException("Unknown ViewModel class")
     }
@@ -55,10 +61,12 @@ class ViewModelFactory(private val application: Application, private val imageRe
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        
+        Log.d(TAG, "onCreate: Activity starting.")
+
         val database = AppDatabase.getInstance(application)
         val repository = ImageRepository(application, database.tagDao())
-        val viewModelFactory = ViewModelFactory(application, repository)
+        Log.d(TAG, "onCreate: Database and Repository initialized.")
+        val viewModelFactory = OrganizerViewModelFactory(application, repository)
 
         setContent {
             RobinTheme {
@@ -66,7 +74,8 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    AppNavigation(viewModelFactory)
+                    val navController = rememberNavController()
+                    AppNavigation(navController = navController, viewModelFactory = viewModelFactory)
                 }
             }
         }
@@ -74,72 +83,83 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun AppNavigation(viewModelFactory: ViewModelFactory) {
-    val navController = rememberNavController()
+fun AppNavigation(
+    navController: NavHostController,
+    viewModelFactory: OrganizerViewModelFactory // Assuming you still need this for OrganizerViewModel
+) {
+    val TAG = "AppNavigation"
+    // Create the SharedViewModel, scoped to the whole NavHost
+    val sharedViewModel: SharedViewModel = viewModel()
 
     NavHost(navController = navController, startDestination = "dashboard") {
         composable("dashboard") {
-            DashboardScreen(navController = navController)
+            Log.d(TAG, "AppNavigation: Navigated to dashboard.")
+            // Pass the SharedViewModel to the Dashboard
+            DashboardScreen(navController = navController, sharedViewModel = sharedViewModel)
         }
         composable(
-            route = "organizer/{folderUri}",
-            arguments = listOf(navArgument("folderUri") { type = NavType.StringType })
+            route = "organizer" // The route is now simpler, no more arguments
         ) { backStackEntry ->
-            val folderUriString = backStackEntry.arguments?.getString("folderUri") ?: return@composable
-            val folderUri = Uri.parse(Uri.decode(folderUriString))
-            val viewModel: OrganizerViewModel = viewModel(factory = viewModelFactory)
+            Log.d(TAG, "Navigated to organizer route")
             
-            LaunchedEffect(folderUri) {
-                viewModel.loadImages(folderUri)
-            }
+            // Get the URI safely from the SharedViewModel
+            val folderUri by sharedViewModel.selectedFolderUri.collectAsState()
 
-            OrganizerScreen(viewModel = viewModel)
+            if (folderUri != null) {
+                val organizerViewModel: OrganizerViewModel = viewModel(
+                    viewModelStoreOwner = backStackEntry,
+                    factory = viewModelFactory
+                )
+                
+                LaunchedEffect(folderUri) {
+                    Log.d(TAG, "LaunchedEffect triggered. Calling viewModel.loadImages.")
+                    organizerViewModel.loadImages(folderUri!!)
+                }
+
+                OrganizerScreen(viewModel = organizerViewModel, navController = navController)
+            } else {
+                // This can happen if the user navigates here directly, handle gracefully
+                Log.e(TAG, "OrganizerScreen was opened without a selected folder URI.")
+                Text("Error: No folder selected.")
+            }
         }
     }
 }
 
 @Composable
-fun DashboardScreen(navController: NavHostController) {
+fun DashboardScreen(navController: NavHostController, sharedViewModel: SharedViewModel) {
     val context = LocalContext.current
-
-    // Determine the correct permission based on the Android version
-    val storagePermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-        Manifest.permission.READ_MEDIA_IMAGES
-    } else {
-        Manifest.permission.READ_EXTERNAL_STORAGE
-    }
-
     var hasPermission by remember {
         mutableStateOf(
-            ContextCompat.checkSelfPermission(context, storagePermission) == PackageManager.PERMISSION_GRANTED
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.READ_EXTERNAL_STORAGE
+            ) == PackageManager.PERMISSION_GRANTED
         )
     }
 
     val permissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission(),
-        onResult = { isGranted ->
-            hasPermission = isGranted
-        }
-    )
+        ActivityResultContracts.RequestPermission()
+    ) { isGranted: Boolean ->
+        hasPermission = isGranted
+        Log.d(TAG, "PermissionLauncher result: isGranted = $isGranted")
+    }
 
     val folderPickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocumentTree(),
-        onResult = { uri ->
-            if (uri != null) {
-                context.contentResolver.takePersistableUriPermission(
-                    uri,
-                    Intent.FLAG_GRANT_READ_URI_PERMISSION
-                )
-                val encodedUri = Uri.encode(uri.toString())
-                navController.navigate("organizer/$encodedUri")
-            }
-        }
-    )
-
-    // Request permission automatically when the screen is first shown
-    LaunchedEffect(Unit) {
-        if (!hasPermission) {
-            permissionLauncher.launch(storagePermission)
+        contract = ActivityResultContracts.OpenDocumentTree()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            // 1. Take persistable permission
+            context.contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION
+            )
+            // 2. Put the URI in the SharedViewModel
+            sharedViewModel.selectFolder(uri)
+            // 3. Navigate with the simple route
+            navController.navigate("organizer")
+        } else {
+            Log.d(TAG, "FolderPickerLauncher result: No folder selected.")
         }
     }
 
@@ -147,14 +167,20 @@ fun DashboardScreen(navController: NavHostController) {
         modifier = Modifier.fillMaxSize(),
         contentAlignment = Alignment.Center
     ) {
-        Button(onClick = {
-            if (hasPermission) {
+        if (hasPermission) {
+            Button(onClick = {
+                Log.d(TAG, "Dashboard: 'Select Folder' button clicked.")
                 folderPickerLauncher.launch(null)
-            } else {
-                permissionLauncher.launch(storagePermission)
+            }) {
+                Text("Select Folder to Organize")
             }
-        }) {
-            Text("Pick a Folder to Organize")
+        } else {
+            Button(onClick = {
+                Log.d(TAG, "Dashboard: 'Request Permission' button clicked.")
+                permissionLauncher.launch(Manifest.permission.READ_EXTERNAL_STORAGE)
+            }) {
+                Text("Request Permission")
+            }
         }
     }
 }
