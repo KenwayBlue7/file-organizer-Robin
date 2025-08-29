@@ -6,11 +6,11 @@ import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.kenway.robin.data.ImageRepository
-import com.kenway.robin.data.TagDao
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -27,7 +27,15 @@ class OrganizerViewModel(
     // folderUri is removed from the constructor
 ) : ViewModel() {
 
+    val existingTags: StateFlow<List<String>> = imageRepository.getUniqueTagNames()
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyList()
+        )
+
     private val undoStack = mutableListOf<UndoAction>()
+    private var lastUsedTag: String = "Saved"
 
     data class OrganizerUiState(
         val images: List<Uri> = emptyList(),
@@ -40,7 +48,6 @@ class OrganizerViewModel(
         val canUndo: Boolean = false,
         val isComplete: Boolean = false,
         val errorMessage: String? = null,
-        val existingTags: List<String> = emptyList(), // <-- new property
         val showTagDialog: Boolean = false
     )
 
@@ -50,7 +57,6 @@ class OrganizerViewModel(
     // The init block is no longer needed here, as loading is triggered from the UI
     init {
         Log.d(TAG, "ViewModel initialized.")
-        loadExistingTags()
     }
 
     // The loadImages function is now public and takes the folderUri as a parameter
@@ -77,15 +83,6 @@ class OrganizerViewModel(
                 _uiState.update {
                     it.copy(errorMessage = "Failed to load images: ${e.message}", isLoading = false)
                 }
-            }
-        }
-    }
-
-    private fun loadExistingTags() {
-        viewModelScope.launch {
-            imageRepository.getUniqueTagNames().collectLatest { tags ->
-                Log.d(TAG, "loadExistingTags: Found ${tags.size} unique tags.")
-                _uiState.update { it.copy(existingTags = tags) }
             }
         }
     }
@@ -117,6 +114,7 @@ class OrganizerViewModel(
 
         val currentUri = currentState.images[currentState.currentIndex]
         Log.d(TAG, "onTagImage: Tagging image at index ${currentState.currentIndex} with tag '$tagName', uri: $currentUri")
+        this.lastUsedTag = tagName
         // Store the previous tag if we're overwriting, for a more robust undo
         val previousTag = currentState.sessionTaggedUris[currentUri]
         undoStack.add(UndoAction.Tag(currentUri, previousTag ?: tagName))
@@ -133,6 +131,14 @@ class OrganizerViewModel(
                 isComplete = newIndex >= it.images.size
             )
         }
+    }
+
+    fun onQuickTag() {
+        onTagImage(lastUsedTag)
+    }
+
+    fun onPageChanged(newIndex: Int) {
+        _uiState.update { it.copy(currentIndex = newIndex) }
     }
 
     fun onUndo() {
@@ -182,13 +188,22 @@ class OrganizerViewModel(
             // Finalize tagged images
             Log.d(TAG, "finalizeSession: Finalizing ${currentState.sessionTaggedUris.size} tagged images.")
             currentState.sessionTaggedUris.forEach { (uri, tagName) ->
-                imageRepository.finalizeTag(uri, tagName)
+                try {
+                    imageRepository.finalizeTag(uri, tagName)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to finalize tag for $uri", e)
+                }
             }
 
-            // Here you might add logic to handle deleted images, 
-            // for example, moving them to a trash folder or deleting them.
-            // currently, we just clear the sets.
-            Log.d(TAG, "finalizeSession: Clearing ${currentState.sessionDeletedUris.size} deleted URIs from state.")
+            // Move deleted images to trash
+            Log.d(TAG, "finalizeSession: Moving ${currentState.sessionDeletedUris.size} images to trash.")
+            currentState.sessionDeletedUris.forEach { uri ->
+                try {
+                    imageRepository.moveFileToTrash(uri)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to move file to trash: $uri", e)
+                }
+            }
 
             _uiState.update {
                 it.copy(

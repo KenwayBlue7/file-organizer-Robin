@@ -4,6 +4,8 @@ import android.util.Log
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -13,12 +15,15 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Undo
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -31,9 +36,13 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -50,10 +59,9 @@ fun OrganizerScreen(
     navController: NavController
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val existingTags by viewModel.existingTags.collectAsState()
     var showConfirmationDialog by remember { mutableStateOf(false) }
-    Log.d(TAG, "OrganizerScreen recomposing. isComplete: ${uiState.isComplete}, isLoading: ${uiState.isLoading}")
 
-    // This BackHandler will now correctly trigger the dialog
     BackHandler {
         Log.d(TAG, "BackHandler triggered.")
         val hasChanges = uiState.sessionTaggedUris.isNotEmpty() || uiState.sessionDeletedUris.isNotEmpty()
@@ -98,7 +106,7 @@ fun OrganizerScreen(
 
     if (uiState.showTagDialog) {
         TagSelectionDialog(
-            existingTags = uiState.existingTags,
+            existingTags = existingTags,
             onDismissRequest = {
                 Log.d(TAG, "TagSelectionDialog: Dismissed.")
                 viewModel.dismissTagDialog()
@@ -133,22 +141,30 @@ fun OrganizerScreen(
             }
         }
 
-        // Undo Button Overlay
-        if (uiState.canUndo) {
-             IconButton(
-                onClick = {
-                    Log.d(TAG, "Undo button clicked.")
-                    viewModel.onUndo()
-                },
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(16.dp),
-                enabled = uiState.canUndo
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Undo,
-                    contentDescription = "Undo last action"
-                )
+        // This explicit Box as a separate layer ensures it recomposes correctly
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(16.dp),
+            contentAlignment = Alignment.BottomCenter
+        ) {
+            if (uiState.canUndo) {
+                IconButton(
+                    onClick = {
+                        Log.d(TAG, "Undo button clicked.")
+                        viewModel.onUndo()
+                    },
+                    modifier = Modifier.background(
+                        color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.8f),
+                        shape = CircleShape
+                    )
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Undo,
+                        contentDescription = "Undo last action",
+                        tint = MaterialTheme.colorScheme.onSecondaryContainer
+                    )
+                }
             }
         }
     }
@@ -161,11 +177,16 @@ private fun OrganizerPager(
     viewModel: OrganizerViewModel
 ) {
     val pagerState = rememberPagerState(pageCount = { uiState.images.size })
+    val hapticFeedback = LocalHapticFeedback.current
 
     LaunchedEffect(uiState.currentIndex) {
         if (pagerState.currentPage != uiState.currentIndex && uiState.currentIndex < pagerState.pageCount) {
             pagerState.animateScrollToPage(uiState.currentIndex)
         }
+    }
+
+    LaunchedEffect(pagerState.currentPage) {
+        viewModel.onPageChanged(pagerState.currentPage)
     }
 
     HorizontalPager(
@@ -175,41 +196,104 @@ private fun OrganizerPager(
     ) { page ->
         if (page < uiState.images.size) {
             val imageUri = uiState.images[page]
+
+            var scale by remember { mutableStateOf(1f) }
+            var offset by remember { mutableStateOf(Offset.Zero) }
+
+            // Reset state when the page is changed
+            LaunchedEffect(pagerState.currentPage) {
+                if (pagerState.currentPage != page) {
+                    scale = 1f
+                    offset = Offset.Zero
+                }
+            }
+
             Box(modifier = Modifier.fillMaxSize()) {
                 AsyncImage(
                     model = imageUri,
                     contentDescription = "Image to organize",
                     contentScale = ContentScale.Fit,
                     modifier = Modifier
-                        .fillMaxSize() // Use fillMaxSize to make the whole area interactive
+                        .fillMaxSize()
+                        .graphicsLayer(
+                            scaleX = scale,
+                            scaleY = scale,
+                            translationX = offset.x,
+                            translationY = offset.y
+                        )
                         .pointerInput(Unit) {
-                            var totalDrag = 0f
-                            detectVerticalDragGestures(
-                                onDragStart = {
-                                    totalDrag = 0f
-                                    Log.d(TAG, "Vertical drag started.")
-                                },
-                                onDragEnd = {
-                                    val swipeThreshold = 200
-                                    Log.d(TAG, "Vertical drag ended. Total drag: $totalDrag")
-                                    when {
-                                        // A negative value means swiping up (deleting)
-                                        totalDrag < -swipeThreshold -> {
-                                            Log.d(TAG, "Swipe Up detected.")
-                                            viewModel.onSwipeUp()
-                                        }
-                                        // A positive value means swiping down (tagging)
-                                        totalDrag > swipeThreshold -> {
-                                            Log.d(TAG, "Swipe Down detected.")
+                            coroutineScope {
+                                // This detector handles single taps, double taps, and long presses.
+                                launch {
+                                    detectTapGestures(
+                                        onTap = {
+                                            Log.d(TAG, "Single tap detected (Quick Tag).")
+                                            viewModel.onQuickTag()
+                                        },
+                                        onDoubleTap = {
+                                            Log.d(TAG, "Double tap detected (Zoom).")
+                                            scale = if (scale > 1f) 1f else 3f
+                                            offset = Offset.Zero // Reset pan on zoom toggle
+                                            hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        },
+                                        onLongPress = {
+                                            Log.d(TAG, "Long press detected (Open Tag Dialog).")
+                                            hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
                                             viewModel.openTagDialog()
                                         }
-                                    }
-                                },
-                                onVerticalDrag = { change, dragAmount ->
-                                    change.consume()
-                                    totalDrag += dragAmount
+                                    )
                                 }
-                            )
+
+                                // This detector handles pinch-to-zoom and panning when the image is zoomed in.
+                                launch {
+                                    detectTransformGestures { _, pan, zoom, _ ->
+                                        if (scale > 1f) {
+                                            scale = (scale * zoom).coerceIn(1f, 5f)
+
+                                            // Calculate bounds to prevent panning image out of view
+                                            val maxOffsetX = (size.width * (scale - 1)) / 2
+                                            val maxOffsetY = (size.height * (scale - 1)) / 2
+
+                                            val newOffset = offset + pan
+                                            offset = Offset(
+                                                x = newOffset.x.coerceIn(-maxOffsetX, maxOffsetX),
+                                                y = newOffset.y.coerceIn(-maxOffsetY, maxOffsetY)
+                                            )
+                                        }
+                                    }
+                                }
+
+                                // This detector handles the vertical swipe-up gesture for deletion when not zoomed.
+                                launch {
+                                    var totalDrag = 0f
+                                    detectVerticalDragGestures(
+                                        onDragStart = {
+                                            if (scale == 1f) {
+                                                totalDrag = 0f
+                                                Log.d(TAG, "Vertical drag started.")
+                                            }
+                                        },
+                                        onDragEnd = {
+                                            if (scale == 1f) {
+                                                val swipeThreshold = 200
+                                                Log.d(TAG, "Vertical drag ended. Total drag: $totalDrag")
+                                                // A negative value means swiping up (deleting)
+                                                if (totalDrag < -swipeThreshold) {
+                                                    Log.d(TAG, "Swipe Up detected.")
+                                                    hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                    viewModel.onSwipeUp()
+                                                }
+                                            }
+                                        },
+                                        onVerticalDrag = { change, dragAmount ->
+                                            if (scale == 1f) {
+                                                change.consume()
+                                                totalDrag += dragAmount
+                                            }
+                                        }
+                                    )
+                                }
+                            }
                         }
                 )
 
@@ -226,6 +310,20 @@ private fun OrganizerPager(
                             color = Color.White,
                             fontSize = 32.sp,
                             fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+
+                // Add the Edit button for tagged images
+                if (imageUri in uiState.sessionTaggedUris) {
+                    IconButton(
+                        onClick = { viewModel.openTagDialog() },
+                        modifier = Modifier.align(Alignment.TopEnd)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Edit,
+                            contentDescription = "Edit Tag",
+                            tint = Color.White
                         )
                     }
                 }

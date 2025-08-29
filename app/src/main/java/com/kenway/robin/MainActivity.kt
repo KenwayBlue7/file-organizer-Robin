@@ -1,9 +1,7 @@
 package com.kenway.robin
 
-import android.Manifest
 import android.app.Application
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
 import android.util.Log
@@ -11,23 +9,47 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.Button
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.core.content.ContextCompat
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -35,20 +57,21 @@ import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import coil.compose.AsyncImage
 import com.kenway.robin.data.AppDatabase
 import com.kenway.robin.data.ImageRepository
 import com.kenway.robin.ui.organizer.OrganizerScreen
 import com.kenway.robin.ui.theme.RobinTheme
+import com.kenway.robin.ui.trash.TrashScreen
+import com.kenway.robin.viewmodel.DashboardViewModel
 import com.kenway.robin.viewmodel.OrganizerViewModel
 import com.kenway.robin.viewmodel.SharedViewModel
+import com.kenway.robin.viewmodel.TrashViewModel
 
 private const val TAG = "MainActivity"
 
-// This factory is now specific to OrganizerViewModel and will be created on-the-fly
-class OrganizerViewModelFactory(
-    private val application: Application,
-    private val imageRepository: ImageRepository
-) : ViewModelProvider.Factory {
+// --- ViewModel Factories --- //
+class OrganizerViewModelFactory(private val application: Application, private val imageRepository: ImageRepository) : ViewModelProvider.Factory {
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         if (modelClass.isAssignableFrom(OrganizerViewModel::class.java)) {
             @Suppress("UNCHECKED_CAST")
@@ -58,128 +81,223 @@ class OrganizerViewModelFactory(
     }
 }
 
+class DashboardViewModelFactory(private val application: Application, private val imageRepository: ImageRepository) : ViewModelProvider.Factory {
+    override fun <T : ViewModel> create(modelClass: Class<T>): T {
+        if (modelClass.isAssignableFrom(DashboardViewModel::class.java)) {
+            @Suppress("UNCHECKED_CAST")
+            return DashboardViewModel(application, imageRepository) as T
+        }
+        throw IllegalArgumentException("Unknown ViewModel class")
+    }
+}
+
+class TrashViewModelFactory(private val imageRepository: ImageRepository) : ViewModelProvider.Factory {
+    override fun <T : ViewModel> create(modelClass: Class<T>): T {
+        if (modelClass.isAssignableFrom(TrashViewModel::class.java)) {
+            @Suppress("UNCHECKED_CAST")
+            return TrashViewModel(imageRepository) as T
+        }
+        throw IllegalArgumentException("Unknown ViewModel class")
+    }
+}
+
+
+// --- Main Activity --- //
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        Log.d(TAG, "onCreate: Activity starting.")
-
+        
         val database = AppDatabase.getInstance(application)
         val repository = ImageRepository(application, database.tagDao())
-        Log.d(TAG, "onCreate: Database and Repository initialized.")
-        val viewModelFactory = OrganizerViewModelFactory(application, repository)
+        val organizerViewModelFactory = OrganizerViewModelFactory(application, repository)
+        val dashboardViewModelFactory = DashboardViewModelFactory(application, repository)
+        val trashViewModelFactory = TrashViewModelFactory(repository)
 
         setContent {
             RobinTheme {
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background
-                ) {
+                Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                     val navController = rememberNavController()
-                    AppNavigation(navController = navController, viewModelFactory = viewModelFactory)
+                    AppNavigation(
+                        navController = navController,
+                        organizerViewModelFactory = organizerViewModelFactory,
+                        dashboardViewModelFactory = dashboardViewModelFactory,
+                        trashViewModelFactory = trashViewModelFactory
+                    )
                 }
             }
         }
     }
 }
 
+// --- Navigation --- //
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AppNavigation(
     navController: NavHostController,
-    viewModelFactory: OrganizerViewModelFactory // Assuming you still need this for OrganizerViewModel
+    organizerViewModelFactory: OrganizerViewModelFactory,
+    dashboardViewModelFactory: DashboardViewModelFactory,
+    trashViewModelFactory: TrashViewModelFactory
 ) {
-    val TAG = "AppNavigation"
-    // Create the SharedViewModel, scoped to the whole NavHost
     val sharedViewModel: SharedViewModel = viewModel()
 
     NavHost(navController = navController, startDestination = "dashboard") {
         composable("dashboard") {
-            Log.d(TAG, "AppNavigation: Navigated to dashboard.")
-            // Pass the SharedViewModel to the Dashboard
-            DashboardScreen(navController = navController, sharedViewModel = sharedViewModel)
+            val dashboardViewModel: DashboardViewModel = viewModel(factory = dashboardViewModelFactory)
+            DashboardScreen(
+                navController = navController,
+                sharedViewModel = sharedViewModel,
+                viewModel = dashboardViewModel
+            )
         }
-        composable(
-            route = "organizer" // The route is now simpler, no more arguments
-        ) { backStackEntry ->
-            Log.d(TAG, "Navigated to organizer route")
-            
-            // Get the URI safely from the SharedViewModel
+        composable("organizer") { backStackEntry ->
             val folderUri by sharedViewModel.selectedFolderUri.collectAsState()
-
             if (folderUri != null) {
                 val organizerViewModel: OrganizerViewModel = viewModel(
                     viewModelStoreOwner = backStackEntry,
-                    factory = viewModelFactory
+                    factory = organizerViewModelFactory
                 )
                 
                 LaunchedEffect(folderUri) {
-                    Log.d(TAG, "LaunchedEffect triggered. Calling viewModel.loadImages.")
                     organizerViewModel.loadImages(folderUri!!)
                 }
 
                 OrganizerScreen(viewModel = organizerViewModel, navController = navController)
             } else {
-                // This can happen if the user navigates here directly, handle gracefully
-                Log.e(TAG, "OrganizerScreen was opened without a selected folder URI.")
                 Text("Error: No folder selected.")
+            }
+        }
+        composable("trash") {
+            val trashViewModel: TrashViewModel = viewModel(factory = trashViewModelFactory)
+            TrashScreen(viewModel = trashViewModel)
+        }
+    }
+}
+
+// --- Dashboard Screen UI --- //
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun DashboardScreen(
+    navController: NavHostController,
+    sharedViewModel: SharedViewModel,
+    viewModel: DashboardViewModel
+) {
+    val context = LocalContext.current
+    val uiState by viewModel.uiState.collectAsState()
+
+    // --- Permission and Folder Picker Logic (same as before) --- //
+    // ...
+
+    val folderPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            sharedViewModel.selectFolder(uri)
+            navController.navigate("organizer")
+        }
+    }
+
+    // Scaffold provides the basic app layout structure (like top bar, FAB, etc.)
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Dashboard") },
+                actions = {
+                    IconButton(onClick = { navController.navigate("trash") }) {
+                        Icon(Icons.Default.Delete, contentDescription = "Open Trash")
+                    }
+                }
+            )
+        },
+        floatingActionButton = {
+            FloatingActionButton(onClick = { folderPickerLauncher.launch(null) }) {
+                Icon(Icons.Default.Add, contentDescription = "Organize a new folder")
+            }
+        }
+    ) { paddingValues ->
+        Column(modifier = Modifier.padding(paddingValues).padding(16.dp)) {
+            Text(
+                "Tagged Folders",
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.Bold
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Monitor for New Screenshots",
+                    modifier = Modifier.weight(1f)
+                )
+                Switch(
+                    checked = uiState.isServiceEnabled,
+                    onCheckedChange = { viewModel.toggleMonitoringService(it) }
+                )
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            if (uiState.isLoading) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator()
+                }
+            } else if (uiState.taggedFolders.isEmpty()) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text("No tagged folders yet. Tap the '+' button to start!")
+                }
+            } else {
+                // LazyVerticalGrid displays items in a grid and is very efficient
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(2),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    items(uiState.taggedFolders) { folder ->
+                        FolderItem(taggedFolder = folder)
+                    }
+                }
             }
         }
     }
 }
 
 @Composable
-fun DashboardScreen(navController: NavHostController, sharedViewModel: SharedViewModel) {
-    val context = LocalContext.current
-    var hasPermission by remember {
-        mutableStateOf(
-            ContextCompat.checkSelfPermission(
-                context,
-                Manifest.permission.READ_EXTERNAL_STORAGE
-            ) == PackageManager.PERMISSION_GRANTED
-        )
-    }
-
-    val permissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { isGranted: Boolean ->
-        hasPermission = isGranted
-        Log.d(TAG, "PermissionLauncher result: isGranted = $isGranted")
-    }
-
-    val folderPickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocumentTree()
-    ) { uri: Uri? ->
-        if (uri != null) {
-            // 1. Take persistable permission
-            context.contentResolver.takePersistableUriPermission(
-                uri,
-                Intent.FLAG_GRANT_READ_URI_PERMISSION
-            )
-            // 2. Put the URI in the SharedViewModel
-            sharedViewModel.selectFolder(uri)
-            // 3. Navigate with the simple route
-            navController.navigate("organizer")
-        } else {
-            Log.d(TAG, "FolderPickerLauncher result: No folder selected.")
-        }
-    }
-
-    Box(
-        modifier = Modifier.fillMaxSize(),
-        contentAlignment = Alignment.Center
+fun FolderItem(taggedFolder: com.kenway.robin.data.TaggedFolder) {
+    Card(
+        modifier = Modifier
+            .aspectRatio(1f) // Makes the card a square
+            .clickable { /* TODO: Navigate to a screen to view this folder's contents */ },
+        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
     ) {
-        if (hasPermission) {
-            Button(onClick = {
-                Log.d(TAG, "Dashboard: 'Select Folder' button clicked.")
-                folderPickerLauncher.launch(null)
-            }) {
-                Text("Select Folder to Organize")
-            }
-        } else {
-            Button(onClick = {
-                Log.d(TAG, "Dashboard: 'Request Permission' button clicked.")
-                permissionLauncher.launch(Manifest.permission.READ_EXTERNAL_STORAGE)
-            }) {
-                Text("Request Permission")
+        Box {
+            // Folder thumbnail
+            AsyncImage(
+                model = taggedFolder.thumbnailUri,
+                contentDescription = "Thumbnail for ${taggedFolder.folderFile.name}",
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop,
+                error = {
+                    Box(modifier = Modifier.fillMaxSize().padding(8.dp), contentAlignment = Alignment.Center) {
+                         Text("No thumbnail", style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            )
+            // Folder name overlay
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(8.dp),
+                contentAlignment = Alignment.BottomStart
+            ) {
+                Text(
+                    text = taggedFolder.folderFile.name,
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    style = MaterialTheme.typography.titleMedium
+                )
             }
         }
     }
