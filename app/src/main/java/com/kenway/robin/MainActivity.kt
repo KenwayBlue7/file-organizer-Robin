@@ -1,7 +1,9 @@
 package com.kenway.robin
 
+import android.Manifest
 import android.app.Application
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
 import android.util.Log
@@ -26,6 +28,7 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -43,6 +46,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -50,6 +56,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -184,18 +191,50 @@ fun DashboardScreen(
     val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsState()
 
+    // Observe navigation result for session saved
+    LaunchedEffect(navController) {
+        val currentBackStackEntry = navController.currentBackStackEntry
+        currentBackStackEntry?.savedStateHandle?.getLiveData<Boolean>("session_saved")?.observeForever { sessionSaved ->
+            if (sessionSaved == true) {
+                viewModel.refreshFolders()
+                // Clear the result to prevent repeated calls
+                currentBackStackEntry.savedStateHandle.remove<Boolean>("session_saved")
+            }
+        }
+    }
+
     // --- Permission and Folder Picker Logic (same as before) --- //
     // ...
 
-    val folderPickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocumentTree()
-    ) { uri: Uri? ->
-        if (uri != null) {
-            context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            sharedViewModel.selectFolder(uri)
-            navController.navigate("organizer")
-        }
+    var hasPermission by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.READ_EXTERNAL_STORAGE
+            ) == PackageManager.PERMISSION_GRANTED
+        )
     }
+    var permissionError by remember { mutableStateOf<String?>(null) }
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+        onResult = { isGranted ->
+            hasPermission = isGranted
+            if (!isGranted) {
+                permissionError = "Permission denied. Cannot select folder."
+            }
+        }
+    )
+
+    val folderPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree(),
+        onResult = { uri ->
+            if (uri != null) {
+                val encodedUri = Uri.encode(uri.toString())
+                navController.navigate("organizer/$encodedUri")
+            }
+        }
+    )
 
     // Scaffold provides the basic app layout structure (like top bar, FAB, etc.)
     Scaffold(
@@ -278,12 +317,7 @@ fun FolderItem(taggedFolder: com.kenway.robin.data.TaggedFolder) {
                 model = taggedFolder.thumbnailUri,
                 contentDescription = "Thumbnail for ${taggedFolder.folderFile.name}",
                 modifier = Modifier.fillMaxSize(),
-                contentScale = ContentScale.Crop,
-                error = {
-                    Box(modifier = Modifier.fillMaxSize().padding(8.dp), contentAlignment = Alignment.Center) {
-                         Text("No thumbnail", style = MaterialTheme.typography.bodySmall)
-                    }
-                }
+                contentScale = ContentScale.Crop
             )
             // Folder name overlay
             Box(

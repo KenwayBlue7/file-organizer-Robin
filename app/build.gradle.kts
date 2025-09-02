@@ -49,24 +49,26 @@ android {
 }
 
 dependencies {
-    // Updated to a recent, stable Compose BOM
+    // Defines a consistent set of versions for the core Compose libraries
     implementation(platform("androidx.compose:compose-bom:2024.02.02"))
-    androidTestImplementation(platform("androidx.compose:compose-bom:2023.08.00")) //androidTestImplementation uses an older BOM for compatibility
+    androidTestImplementation(platform("androidx.compose:compose-bom:2024.02.02")) // Updated to match
 
-    // Core and Activity (versions now correctly managed by the BOM)
-    implementation("androidx.core:core-ktx")
-    implementation("androidx.lifecycle:lifecycle-runtime-ktx")
-    implementation("androidx.activity:activity-compose")
-    implementation("androidx.lifecycle:lifecycle-viewmodel-compose")
+    // Core AndroidX libraries - These need explicit versions
+    implementation("androidx.core:core-ktx:1.12.0")
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.7.0")
+    implementation("androidx.activity:activity-compose:1.8.2")
 
-    // Compose UI Libraries (versions managed by the new BOM)
+    // Lifecycle and Navigation are not in the Compose BOM and need their own versions
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0")
+    implementation("androidx.navigation:navigation-compose:2.7.7")
+
+    // Compose UI Libraries (their versions are now correctly managed by the BOM)
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-graphics")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.compose.foundation:foundation")
-    implementation("androidx.navigation:navigation-compose:2.7.7")
 
     // Coil for images (has its own version)
     implementation("io.coil-kt:coil-compose:2.6.0")

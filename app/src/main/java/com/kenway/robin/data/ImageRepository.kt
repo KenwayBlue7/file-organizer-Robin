@@ -281,7 +281,7 @@ class ImageRepository(
         }
 
         val imageExtensions = setOf("jpg", "jpeg", "png", "webp", "gif")
-        val trashedFiles = trashDir.listFiles { file =>
+        val trashedFiles = trashDir.listFiles { file ->
             file.isFile && file.extension.lowercase() in imageExtensions
         }?.toList() ?: emptyList()
 

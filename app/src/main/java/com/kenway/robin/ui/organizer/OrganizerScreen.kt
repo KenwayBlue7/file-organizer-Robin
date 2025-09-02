@@ -49,6 +49,7 @@ import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
 import coil.compose.AsyncImage
 import com.kenway.robin.viewmodel.OrganizerViewModel
+import kotlinx.coroutines.launch
 import kotlin.math.abs
 
 private const val TAG = "OrganizerScreen"
@@ -61,6 +62,7 @@ fun OrganizerScreen(
     val uiState by viewModel.uiState.collectAsState()
     val existingTags by viewModel.existingTags.collectAsState()
     var showConfirmationDialog by remember { mutableStateOf(false) }
+    val coroutineScope = rememberCoroutineScope()
 
     BackHandler {
         Log.d(TAG, "BackHandler triggered.")
@@ -76,30 +78,29 @@ fun OrganizerScreen(
 
     if (showConfirmationDialog) {
         AlertDialog(
-            onDismissRequest = {
-                Log.d(TAG, "ConfirmationDialog: Dismissed (tapped outside).")
-                showConfirmationDialog = false
-            },
-            title = { Text("Save Changes?") },
-            text = { Text("You have unsaved changes. Would you like to save them?") },
+            onDismissRequest = { showConfirmationDialog = false },
+            title = { Text("Unsaved Changes") },
+            text = { Text("You have unsaved changes. Do you want to save them before leaving?") },
             confirmButton = {
-                TextButton(
-                    onClick = {
-                        Log.d(TAG, "ConfirmationDialog: 'Save' clicked.")
+                TextButton(onClick = {
+                    showConfirmationDialog = false
+                    coroutineScope.launch {
                         viewModel.finalizeSession()
-                        showConfirmationDialog = false
+                        // Set result for dashboard refresh
+                        navController.previousBackStackEntry?.savedStateHandle?.set("session_saved", true)
                         navController.popBackStack()
                     }
-                ) { Text("Save") }
+                }) {
+                    Text("Save")
+                }
             },
             dismissButton = {
-                TextButton(
-                    onClick = {
-                        Log.d(TAG, "ConfirmationDialog: 'Discard' clicked.")
-                        showConfirmationDialog = false
-                        navController.popBackStack()
-                    }
-                ) { Text("Discard") }
+                TextButton(onClick = {
+                    showConfirmationDialog = false
+                    navController.popBackStack()
+                }) {
+                    Text("Discard")
+                }
             }
         )
     }
@@ -222,78 +223,73 @@ private fun OrganizerPager(
                             translationY = offset.y
                         )
                         .pointerInput(Unit) {
-                            coroutineScope {
-                                // This detector handles single taps, double taps, and long presses.
-                                launch {
-                                    detectTapGestures(
-                                        onTap = {
-                                            Log.d(TAG, "Single tap detected (Quick Tag).")
-                                            viewModel.onQuickTag()
-                                        },
-                                        onDoubleTap = {
-                                            Log.d(TAG, "Double tap detected (Zoom).")
-                                            scale = if (scale > 1f) 1f else 3f
-                                            offset = Offset.Zero // Reset pan on zoom toggle
-                                            hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
-                                        },
-                                        onLongPress = {
-                                            Log.d(TAG, "Long press detected (Open Tag Dialog).")
-                                            hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
-                                            viewModel.openTagDialog()
-                                        }
-                                    )
+                            // This detector handles single taps, double taps, and long presses.
+                            detectTapGestures(
+                                onTap = {
+                                    Log.d(TAG, "Single tap detected (Quick Tag).")
+                                    hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    viewModel.onQuickTag()
+                                },
+                                onDoubleTap = {
+                                    Log.d(TAG, "Double tap detected (Zoom).")
+                                    scale = if (scale > 1f) 1f else 3f
+                                    offset = Offset.Zero // Reset pan on zoom toggle
+                                    hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                                },
+                                onLongPress = {
+                                    Log.d(TAG, "Long press detected (Open Tag Dialog).")
+                                    hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    viewModel.openTagDialog()
                                 }
+                            )
+                        }
+                        .pointerInput(Unit) {
+                            // This detector handles pinch-to-zoom and panning when the image is zoomed in.
+                            detectTransformGestures { _, pan, zoom, _ ->
+                                if (scale > 1f) {
+                                    scale = (scale * zoom).coerceIn(1f, 5f)
 
-                                // This detector handles pinch-to-zoom and panning when the image is zoomed in.
-                                launch {
-                                    detectTransformGestures { _, pan, zoom, _ ->
-                                        if (scale > 1f) {
-                                            scale = (scale * zoom).coerceIn(1f, 5f)
+                                    // Calculate bounds to prevent panning image out of view
+                                    val maxOffsetX = (size.width * (scale - 1)) / 2
+                                    val maxOffsetY = (size.height * (scale - 1)) / 2
 
-                                            // Calculate bounds to prevent panning image out of view
-                                            val maxOffsetX = (size.width * (scale - 1)) / 2
-                                            val maxOffsetY = (size.height * (scale - 1)) / 2
-
-                                            val newOffset = offset + pan
-                                            offset = Offset(
-                                                x = newOffset.x.coerceIn(-maxOffsetX, maxOffsetX),
-                                                y = newOffset.y.coerceIn(-maxOffsetY, maxOffsetY)
-                                            )
-                                        }
-                                    }
-                                }
-
-                                // This detector handles the vertical swipe-up gesture for deletion when not zoomed.
-                                launch {
-                                    var totalDrag = 0f
-                                    detectVerticalDragGestures(
-                                        onDragStart = {
-                                            if (scale == 1f) {
-                                                totalDrag = 0f
-                                                Log.d(TAG, "Vertical drag started.")
-                                            }
-                                        },
-                                        onDragEnd = {
-                                            if (scale == 1f) {
-                                                val swipeThreshold = 200
-                                                Log.d(TAG, "Vertical drag ended. Total drag: $totalDrag")
-                                                // A negative value means swiping up (deleting)
-                                                if (totalDrag < -swipeThreshold) {
-                                                    Log.d(TAG, "Swipe Up detected.")
-                                                    hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
-                                                    viewModel.onSwipeUp()
-                                                }
-                                            }
-                                        },
-                                        onVerticalDrag = { change, dragAmount ->
-                                            if (scale == 1f) {
-                                                change.consume()
-                                                totalDrag += dragAmount
-                                            }
-                                        }
+                                    val newOffset = offset + pan
+                                    offset = Offset(
+                                        x = newOffset.x.coerceIn(-maxOffsetX, maxOffsetX),
+                                        y = newOffset.y.coerceIn(-maxOffsetY, maxOffsetY)
                                     )
                                 }
                             }
+                        }
+                        .pointerInput(Unit) {
+                            // This detector handles the vertical swipe-up gesture for deletion when not zoomed.
+                            var totalDrag = 0f
+                            detectVerticalDragGestures(
+                                onDragStart = {
+                                    if (scale == 1f) {
+                                        totalDrag = 0f
+                                        Log.d(TAG, "Vertical drag started.")
+                                    }
+                                },
+                                onDragEnd = {
+                                    if (scale == 1f) {
+                                        val swipeThreshold = 200
+                                        Log.d(TAG, "Vertical drag ended. Total drag: $totalDrag")
+                                        // A negative value means swiping up (deleting)
+                                        if (totalDrag < -swipeThreshold) {
+                                            Log.d(TAG, "Swipe Up detected.")
+                                            hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                                            viewModel.onSwipeUp()
+                                        }
+                                    }
+                                },
+                                onVerticalDrag = { change, dragAmount ->
+                                    if (scale == 1f) {
+                                        change.consume()
+                                        totalDrag += dragAmount
+                                    }
+                                }
+                            )
                         }
                 )
 

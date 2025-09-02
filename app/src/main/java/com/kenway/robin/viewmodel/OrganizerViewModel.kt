@@ -6,6 +6,7 @@ import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.kenway.robin.data.ImageRepository
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -13,6 +14,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private const val TAG = "OrganizerViewModel"
 
@@ -180,39 +182,57 @@ class OrganizerViewModel(
         _uiState.update { it.copy(showTagDialog = false) }
     }
 
-    fun finalizeSession() {
-        Log.d(TAG, "finalizeSession: Starting.")
-        viewModelScope.launch {
+    suspend fun finalizeSession() {
+        Log.d(TAG, "finalizeSession: Starting session finalization.")
+        _uiState.update { it.copy(isLoading = true) }
+        
+        try {
             val currentState = _uiState.value
             
-            // Finalize tagged images
-            Log.d(TAG, "finalizeSession: Finalizing ${currentState.sessionTaggedUris.size} tagged images.")
+            // Process tagged images - each in its own try-catch
             currentState.sessionTaggedUris.forEach { (uri, tagName) ->
                 try {
-                    imageRepository.finalizeTag(uri, tagName)
+                    Log.d(TAG, "finalizeSession: Processing tagged image - URI: $uri, Tag: $tagName")
+                    imageRepository.finalizeTag(uri, tagName) // Changed from tagImage
+                    Log.d(TAG, "finalizeSession: Successfully tagged image - URI: $uri")
                 } catch (e: Exception) {
-                    Log.e(TAG, "Failed to finalize tag for $uri", e)
+                    Log.e(TAG, "finalizeSession: Failed to tag image $uri with tag $tagName", e)
+                    // Continue to next image even if this one fails
                 }
             }
-
-            // Move deleted images to trash
-            Log.d(TAG, "finalizeSession: Moving ${currentState.sessionDeletedUris.size} images to trash.")
+            
+            // Process deleted images - each in its own try-catch
             currentState.sessionDeletedUris.forEach { uri ->
                 try {
-                    imageRepository.moveFileToTrash(uri)
+                    Log.d(TAG, "finalizeSession: Processing deleted image - URI: $uri")
+                    imageRepository.moveFileToTrash(uri) // Changed from moveToTrash
+                    Log.d(TAG, "finalizeSession: Successfully moved to trash - URI: $uri")
                 } catch (e: Exception) {
-                    Log.e(TAG, "Failed to move file to trash: $uri", e)
+                    Log.e(TAG, "finalizeSession: Failed to move image $uri to trash", e)
+                    // Continue to next image even if this one fails
                 }
             }
-
-            _uiState.update {
+            
+            Log.d(TAG, "finalizeSession: Session finalization completed successfully.")
+            _uiState.update { 
                 it.copy(
+                    isLoading = false,
+                    isComplete = true,
                     sessionTaggedUris = emptyMap(),
                     sessionDeletedUris = emptySet(),
-                    isComplete = true // Mark session as complete
+                    imageStatusMap = emptyMap(),
+                    canUndo = false
                 )
             }
-            Log.d(TAG, "finalizeSession: Finished.")
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "finalizeSession: Critical error during session finalization", e)
+            _uiState.update { 
+                it.copy(
+                    isLoading = false,
+                    errorMessage = "Failed to save session: ${e.message}"
+                )
+            }
         }
     }
 }

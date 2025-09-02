@@ -22,7 +22,8 @@ class DashboardViewModel(
     data class DashboardUiState(
         val taggedFolders: List<TaggedFolder> = emptyList(),
         val isLoading: Boolean = false,
-        val isServiceEnabled: Boolean = false
+        val isServiceEnabled: Boolean = false,
+        val errorMessage: String? = null
     )
 
     private val _uiState = MutableStateFlow(DashboardUiState())
@@ -56,5 +57,28 @@ class DashboardViewModel(
             application.stopService(intent)
         }
         _uiState.update { it.copy(isServiceEnabled = enable) }
+    }
+
+    // Change from private to public and rename
+    fun refreshFolders() {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoading = true) }
+            try {
+                val folders = imageRepository.getTaggedFolders()
+                _uiState.update { 
+                    it.copy(
+                        taggedFolders = folders,
+                        isLoading = false
+                    )
+                }
+            } catch (e: Exception) {
+                _uiState.update { 
+                    it.copy(
+                        isLoading = false,
+                        errorMessage = "Failed to load folders: ${e.message}"
+                    )
+                }
+            }
+        }
     }
 }
