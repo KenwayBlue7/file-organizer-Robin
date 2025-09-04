@@ -221,7 +221,8 @@ class ScreenshotMonitorService : Service() {
             val projection = arrayOf(
                 MediaStore.Images.Media._ID,
                 MediaStore.Images.Media.DATA,
-                MediaStore.Images.Media.BUCKET_DISPLAY_NAME
+                MediaStore.Images.Media.BUCKET_DISPLAY_NAME,
+                MediaStore.Images.Media.DATE_ADDED
             )
             
             // Add selection clause to filter for Screenshots folder
@@ -240,6 +241,7 @@ class ScreenshotMonitorService : Service() {
                     val id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID))
                     val path = cursor.getString(cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DATA))
                     val bucketName = cursor.getString(cursor.getColumnIndexOrThrow(MediaStore.Images.Media.BUCKET_DISPLAY_NAME))
+                    val dateAdded = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DATE_ADDED))
                     
                     Log.d(TAG, "Screenshot detected in bucket: $bucketName, path: $path")
                     
@@ -248,10 +250,17 @@ class ScreenshotMonitorService : Service() {
                         id
                     )
 
-                    // Avoid processing the same screenshot multiple times
-                    if (screenshotUri != lastProcessedUri) {
+                    // Calculate the age of the file in seconds
+                    val currentTimeSeconds = System.currentTimeMillis() / 1000
+                    val fileAgeSeconds = currentTimeSeconds - dateAdded
+
+                    // Only process if file is less than 5 seconds old and not already processed
+                    if (fileAgeSeconds < 5 && screenshotUri != lastProcessedUri) {
                         lastProcessedUri = screenshotUri
                         showScreenshotNotification(screenshotUri)
+                        Log.d(TAG, "Processing screenshot: age = ${fileAgeSeconds}s")
+                    } else {
+                        Log.d(TAG, "Skipping screenshot: age = ${fileAgeSeconds}s (too old or already processed)")
                     }
                 }
             }
