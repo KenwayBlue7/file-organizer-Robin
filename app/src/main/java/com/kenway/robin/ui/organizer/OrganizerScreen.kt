@@ -9,9 +9,12 @@ import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
@@ -197,27 +200,6 @@ fun OrganizerScreen(
         modifier = Modifier.fillMaxSize(),
         contentAlignment = Alignment.Center
     ) {
-        // Add LinearProgressIndicator at the top
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(top = 16.dp, start = 16.dp, end = 16.dp),
-            contentAlignment = Alignment.TopCenter
-        ) {
-            // Calculate progress: (tagged + deleted) / total images
-            val progress = if (uiState.images.isNotEmpty()) {
-                val processedCount = uiState.sessionTaggedUris.size + uiState.sessionDeletedUris.size
-                processedCount.toFloat() / uiState.images.size.toFloat()
-            } else {
-                0f
-            }
-            
-            androidx.compose.material3.LinearProgressIndicator(
-                progress = { progress },
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
-
         when {
             uiState.errorMessage != null -> {
                 Text("Error: ${uiState.errorMessage}")
@@ -236,28 +218,50 @@ fun OrganizerScreen(
             }
         }
 
-        // This explicit Box as a separate layer ensures it recomposes correctly
+        // Bottom UI elements - Progress bar and Undo button
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(16.dp),
             contentAlignment = Alignment.BottomCenter
         ) {
-            if (uiState.canUndo) {
-                IconButton(
-                    onClick = {
-                        Log.d(TAG, "Undo button clicked.")
-                        viewModel.onUndo()
-                    },
-                    modifier = Modifier.background(
-                        color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.8f),
-                        shape = CircleShape
-                    )
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Undo,
-                        contentDescription = "Undo last action",
-                        tint = MaterialTheme.colorScheme.onSecondaryContainer
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                // Undo button (appears above progress bar when available)
+                if (uiState.canUndo) {
+                    IconButton(
+                        onClick = {
+                            Log.d(TAG, "Undo button clicked.")
+                            viewModel.onUndo()
+                        },
+                        modifier = Modifier.background(
+                            color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.8f),
+                            shape = CircleShape
+                        )
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Undo,
+                            contentDescription = "Undo last action",
+                            tint = MaterialTheme.colorScheme.onSecondaryContainer
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(16.dp))
+                }
+
+                // Progress bar
+                if (uiState.images.isNotEmpty()) {
+                    // Calculate progress: (tagged + deleted) / total images
+                    val progress = if (uiState.images.isNotEmpty()) {
+                        val processedCount = uiState.sessionTaggedUris.size + uiState.sessionDeletedUris.size
+                        processedCount.toFloat() / uiState.images.size.toFloat()
+                    } else {
+                        0f
+                    }
+                    
+                    LinearProgressIndicator(
+                        progress = { progress },
+                        modifier = Modifier.fillMaxWidth(),
                     )
                 }
             }

@@ -39,6 +39,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.NorthEast
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -403,9 +404,25 @@ fun DashboardScreen(
                     } else {
                         requestStoragePermission(context, legacyPermissionLauncher, manageStorageLauncher)
                     }
-                }
+                },
+                modifier = Modifier.padding(16.dp) // Add padding for larger appearance
             ) {
-                Icon(Icons.Default.Add, contentDescription = "Organize a new folder")
+                Row(
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp), // Increased padding
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp) // Increased spacing
+                ) {
+                    Text(
+                        text = "Organize",
+                        style = MaterialTheme.typography.titleMedium, // Larger text style
+                        fontWeight = FontWeight.Bold
+                    )
+                    Icon(
+                        Icons.Default.NorthEast,
+                        contentDescription = "Organize a new folder",
+                        modifier = Modifier.padding(start = 4.dp) // Add slight padding for better spacing
+                    )
+                }
             }
         }
     ) { paddingValues ->
@@ -478,7 +495,7 @@ fun DashboardScreen(
                 }
                 else -> {
                     LazyVerticalGrid(
-                        columns = GridCells.Fixed(2),
+                        columns = GridCells.Fixed(3),
                         verticalArrangement = Arrangement.spacedBy(16.dp),
                         horizontalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
@@ -517,7 +534,7 @@ private fun LocalFolderItem(
                 contentScale = ContentScale.Crop
             )
             
-            // Gradient overlay for better text visibility
+            // Improved gradient overlay for better text visibility while preserving thumbnail
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -525,9 +542,11 @@ private fun LocalFolderItem(
                         Brush.verticalGradient(
                             colors = listOf(
                                 Color.Transparent,
-                                Color.Black.copy(alpha = 0.8f)
+                                Color.Black.copy(alpha = 0.1f),
+                                Color.Black.copy(alpha = 0.4f),
+                                Color.Black.copy(alpha = 0.7f)
                             ),
-                            startY = 0.6f,
+                            startY = 0.4f,
                             endY = 1.0f
                         )
                     ),
@@ -547,7 +566,7 @@ private fun LocalFolderItem(
                     // Optional: Show image count
                     Text(
                         text = "${taggedFolder.folderFile.listFiles()?.size ?: 0} images",
-                        color = Color.White.copy(alpha = 0.8f),
+                        color = Color.White.copy(alpha = 0.9f),
                         style = MaterialTheme.typography.bodySmall
                     )
                 }

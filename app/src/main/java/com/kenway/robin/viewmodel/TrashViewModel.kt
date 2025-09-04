@@ -45,4 +45,17 @@ class TrashViewModel(
             loadTrashedFiles() // Refresh the list
         }
     }
+
+    // Add this method to your TrashViewModel class
+    fun deleteAllPermanently() {
+        viewModelScope.launch {
+            uiState.value.trashedFiles.forEach { file ->
+                if (file.exists()) {
+                    file.delete()
+                }
+            }
+            // Refresh the trashed files list
+            loadTrashedFiles()
+        }
+    }
 }
