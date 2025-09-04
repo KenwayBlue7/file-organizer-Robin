@@ -18,9 +18,10 @@ import kotlinx.coroutines.withContext
 
 private const val TAG = "OrganizerViewModel"
 
+// Update the UndoAction sealed class to include index
 sealed class UndoAction {
-    data class Delete(val uri: android.net.Uri) : UndoAction()
-    data class Tag(val uri: android.net.Uri, val tagName: String) : UndoAction()
+    data class Delete(val uri: android.net.Uri, val index: Int) : UndoAction()
+    data class Tag(val uri: android.net.Uri, val tagName: String, val index: Int) : UndoAction()
 }
 
 class OrganizerViewModel(
@@ -89,13 +90,14 @@ class OrganizerViewModel(
         }
     }
 
+    // Update onSwipeUp to include the index
     fun onSwipeUp() {
         val currentState = _uiState.value
         if (currentState.currentIndex >= currentState.images.size) return
         
         val currentUri = currentState.images[currentState.currentIndex]
         Log.d(TAG, "onSwipeUp: Deleting image at index ${currentState.currentIndex}, uri: $currentUri")
-        undoStack.add(UndoAction.Delete(currentUri))
+        undoStack.add(UndoAction.Delete(currentUri, currentState.currentIndex))
 
         _uiState.update {
             val newIndex = it.currentIndex + 1
@@ -110,6 +112,7 @@ class OrganizerViewModel(
         }
     }
 
+    // Update onTagImage to include the index
     fun onTagImage(tagName: String) {
         val currentState = _uiState.value
         if (currentState.currentIndex >= currentState.images.size) return
@@ -119,8 +122,7 @@ class OrganizerViewModel(
         this.lastUsedTag = tagName
         // Store the previous tag if we're overwriting, for a more robust undo
         val previousTag = currentState.sessionTaggedUris[currentUri]
-        undoStack.add(UndoAction.Tag(currentUri, previousTag ?: tagName))
-
+        undoStack.add(UndoAction.Tag(currentUri, previousTag ?: tagName, currentState.currentIndex))
 
         _uiState.update {
             val newIndex = it.currentIndex + 1
@@ -143,6 +145,7 @@ class OrganizerViewModel(
         _uiState.update { it.copy(currentIndex = newIndex) }
     }
 
+    // Update onUndo to revert to the stored index
     fun onUndo() {
         if (undoStack.isEmpty()) {
             Log.w(TAG, "onUndo: Undo stack is empty, cannot undo.")
@@ -152,23 +155,28 @@ class OrganizerViewModel(
         val lastAction = undoStack.removeLast()
         Log.d(TAG, "onUndo: Undoing last action: $lastAction")
         _uiState.update { currentState ->
-            // Corrected logic: only change the sets, not the index
+            // Revert the action's state and update the index
             val updatedState = when (lastAction) {
                 is UndoAction.Delete -> {
                     currentState.copy(
                         sessionDeletedUris = currentState.sessionDeletedUris - lastAction.uri,
-                        imageStatusMap = currentState.imageStatusMap - lastAction.uri
+                        imageStatusMap = currentState.imageStatusMap - lastAction.uri,
+                        currentIndex = lastAction.index // Revert to the stored index
                     )
                 }
                 is UndoAction.Tag -> {
                     currentState.copy(
                         sessionTaggedUris = currentState.sessionTaggedUris - lastAction.uri,
-                        imageStatusMap = currentState.imageStatusMap - lastAction.uri
+                        imageStatusMap = currentState.imageStatusMap - lastAction.uri,
+                        currentIndex = lastAction.index // Revert to the stored index
                     )
                 }
             }
-            // Corrected syntax for updating canUndo
-            updatedState.copy(canUndo = undoStack.isNotEmpty())
+            // Update canUndo based on remaining actions in stack
+            updatedState.copy(
+                canUndo = undoStack.isNotEmpty(),
+                isComplete = false // Reset completion status when undoing
+            )
         }
     }
 

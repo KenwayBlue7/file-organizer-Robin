@@ -1,7 +1,9 @@
 package com.kenway.robin.viewmodel
 
 import android.app.Application
+import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.kenway.robin.data.ImageRepository
@@ -23,11 +25,14 @@ class DashboardViewModel(
         val taggedFolders: List<TaggedFolder> = emptyList(),
         val isLoading: Boolean = false,
         val isServiceEnabled: Boolean = false,
+        val isMonitoringEnabled: Boolean = false,
         val errorMessage: String? = null
     )
 
     private val _uiState = MutableStateFlow(DashboardUiState())
     val uiState: StateFlow<DashboardUiState> = _uiState.asStateFlow()
+
+    private val prefs: SharedPreferences = application.getSharedPreferences("robin_prefs", Context.MODE_PRIVATE)
 
     init {
         loadTaggedFolders()
@@ -80,5 +85,17 @@ class DashboardViewModel(
                 }
             }
         }
+    }
+
+    fun loadServiceState() {
+        val isEnabled = prefs.getBoolean("service_enabled", false)
+        _uiState.update { it.copy(isMonitoringEnabled = isEnabled) }
+    }
+
+    fun setMonitoringEnabled(enabled: Boolean) {
+        // Save to preferences
+        prefs.edit().putBoolean("service_enabled", enabled).apply()
+        // Update state
+        _uiState.update { it.copy(isMonitoringEnabled = enabled) }
     }
 }

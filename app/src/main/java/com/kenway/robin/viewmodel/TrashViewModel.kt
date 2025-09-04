@@ -41,7 +41,7 @@ class TrashViewModel(
 
     fun deletePermanently(file: File) {
         viewModelScope.launch {
-            imageRepository.deleteFile(file)
+            imageRepository.deletePermanently(file)  // ✅ Correct method name
             loadTrashedFiles() // Refresh the list
         }
     }

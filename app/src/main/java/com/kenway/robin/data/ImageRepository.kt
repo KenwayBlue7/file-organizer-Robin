@@ -1,9 +1,13 @@
 package com.kenway.robin.data
 
 import android.app.Application
+import android.app.PendingIntent
+import android.content.ContentUris
 import android.net.Uri
+import android.os.Build
 import android.os.Environment
 import android.provider.DocumentsContract
+import android.provider.MediaStore
 import android.provider.OpenableColumns
 import android.util.Log
 import java.io.File
@@ -289,7 +293,7 @@ class ImageRepository(
         return@withContext trashedFiles
     }
 
-    suspend fun restoreFile(file: File) = withContext(Dispatchers.IO) {
+    suspend fun restoreFile(file: File): Boolean = withContext(Dispatchers.IO) {
         Log.d(TAG, "restoreFile: Attempting to restore file: ${file.absolutePath}")
         val picturesDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES)
         val robinDir = File(picturesDir, "Robin")
@@ -303,33 +307,189 @@ class ImageRepository(
         val destinationFile = File(restoredDir, file.name)
 
         try {
-            if (!file.renameTo(destinationFile)) {
+            if (file.renameTo(destinationFile)) {
+                Log.d(TAG, "restoreFile: Successfully moved file to ${destinationFile.absolutePath}")
+                return@withContext true
+            } else {
                 Log.w(TAG, "restoreFile: Failed to move file, attempting copy-delete: ${file.absolutePath}")
                 file.copyTo(destinationFile, overwrite = true)
-                file.delete()
+                val deleted = file.delete()
+                Log.d(TAG, "restoreFile: Copy-delete operation completed. Deleted original: $deleted")
+                return@withContext true
             }
-            Log.d(TAG, "restoreFile: Successfully moved file to ${destinationFile.absolutePath}")
         } catch (e: Exception) {
             Log.e(TAG, "restoreFile: Error restoring file ${file.absolutePath}", e)
+            return@withContext false
         }
     }
 
-    suspend fun deleteFile(file: File): Boolean = withContext(Dispatchers.IO) {
-        Log.d(TAG, "deleteFile: Attempting to permanently delete file: ${file.absolutePath}")
+    suspend fun deletePermanently(file: File): Boolean = withContext(Dispatchers.IO) {
+        Log.d(TAG, "deletePermanently: Attempting to permanently delete file: ${file.absolutePath}")
         try {
             if (file.delete()) {
-                Log.d(TAG, "deleteFile: Successfully deleted file: ${file.absolutePath}")
+                Log.d(TAG, "deletePermanently: Successfully deleted file: ${file.absolutePath}")
                 return@withContext true
             } else {
-                Log.w(TAG, "deleteFile: Failed to delete file: ${file.absolutePath}")
+                Log.w(TAG, "deletePermanently: Failed to delete file: ${file.absolutePath}")
                 return@withContext false
             }
         } catch (e: SecurityException) {
-            Log.e(TAG, "deleteFile: Lacked permission to delete file: ${file.absolutePath}", e)
+            Log.e(TAG, "deletePermanently: Lacked permission to delete file: ${file.absolutePath}", e)
             return@withContext false
         } catch (e: Exception) {
-            Log.e(TAG, "deleteFile: Error deleting file: ${file.absolutePath}", e)
+            Log.e(TAG, "deletePermanently: Error deleting file: ${file.absolutePath}", e)
             return@withContext false
+        }
+    }
+
+    suspend fun deletePermanently(uri: Uri): Boolean = withContext(Dispatchers.IO) {
+        Log.d(TAG, "deletePermanently: URI: $uri")
+        
+        if (uri.scheme == "file") {
+            val file = File(uri.path ?: return@withContext false)
+            return@withContext deletePermanently(file)
+        } else if (uri.scheme == "content") {
+            // For content URIs, use the existing deleteFile method
+            return@withContext deleteFile(uri)
+        }
+        
+        return@withContext false
+    }
+
+    suspend fun restoreFile(uri: Uri): Boolean = withContext(Dispatchers.IO) {
+        Log.d(TAG, "restoreFile: URI: $uri")
+        
+        if (uri.scheme == "file") {
+            val file = File(uri.path ?: return@withContext false)
+            return@withContext restoreFile(file)
+        } else if (uri.scheme == "content") {
+            return@withContext restoreContentUri(uri)
+        }
+        
+        return@withContext false
+    }
+
+    private suspend fun restoreContentUri(uri: Uri): Boolean = withContext(Dispatchers.IO) {
+        val contentResolver = application.contentResolver
+        
+        // Get file name (using your existing pattern from finalizeTag)
+        var fileName: String? = null
+        contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (nameIndex != -1) {
+                    fileName = cursor.getString(nameIndex)
+                }
+            }
+        }
+        
+        if (fileName == null) {
+            fileName = "restored_${System.currentTimeMillis()}"
+            Log.w(TAG, "restoreContentUri: Could not determine file name. Using fallback: $fileName")
+        }
+        
+        // Create destination directory
+        val picturesDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES)
+        val robinDir = File(picturesDir, "Robin")
+        val restoredDir = File(robinDir, "Restored")
+        
+        if (!restoredDir.exists()) {
+            restoredDir.mkdirs()
+        }
+        
+        val destinationFile = File(restoredDir, fileName!!)
+        
+        try {
+            // Copy using streams (your existing pattern from finalizeTag)
+            contentResolver.openInputStream(uri)?.use { inputStream ->
+                FileOutputStream(destinationFile).use { outputStream ->
+                    inputStream.copyTo(outputStream)
+                }
+            } ?: return@withContext false
+            
+            Log.d(TAG, "restoreContentUri: Successfully restored to ${destinationFile.absolutePath}")
+            
+            // Try to delete the original (like in your finalizeTag method)
+            try {
+                if (DocumentsContract.deleteDocument(contentResolver, uri)) {
+                    Log.d(TAG, "restoreContentUri: Successfully deleted original file: $uri")
+                } else {
+                    Log.w(TAG, "restoreContentUri: Failed to delete original file: $uri")
+                }
+            } catch (e: SecurityException) {
+                Log.e(TAG, "restoreContentUri: Lacked permission to delete original file: $uri", e)
+            }
+            
+            return@withContext true
+        } catch (e: Exception) {
+            Log.e(TAG, "restoreContentUri: Error restoring file", e)
+            return@withContext false
+        }
+    }
+
+    suspend fun deleteScreenshotUsingMediaStore(uri: Uri): Boolean = withContext(Dispatchers.IO) {
+        return@withContext try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                // Android 11+ - Request user permission to delete
+                val contentResolver = application.contentResolver
+                val pendingIntent = MediaStore.createDeleteRequest(
+                    contentResolver, 
+                    listOf(uri)
+                )
+                
+                // This will show a system dialog asking user permission
+                // You'll need to handle the result in your activity
+                pendingIntent?.let {
+                    // Start the intent from your activity
+                    true
+                } ?: false
+            } else {
+                // Android 10 and below
+                val contentResolver = application.contentResolver
+                contentResolver.delete(uri, null, null) > 0
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to delete screenshot", e)
+            false
+        }
+    }
+
+    // Helper method to get URI from file path
+    suspend fun getMediaStoreUri(file: File): Uri? = withContext(Dispatchers.IO) {
+        val contentResolver = application.contentResolver
+        val projection = arrayOf(MediaStore.Images.Media._ID)
+        val selection = "${MediaStore.Images.Media.DATA}=?"
+        val selectionArgs = arrayOf(file.absolutePath)
+        
+        contentResolver.query(
+            MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+            projection,
+            selection,
+            selectionArgs,
+            null
+        )?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID))
+                return@withContext ContentUris.withAppendedId(
+                    MediaStore.Images.Media.EXTERNAL_CONTENT_URI, 
+                    id
+                )
+            }
+        }
+        return@withContext null
+    }
+
+    suspend fun createDeleteRequest(uri: Uri): PendingIntent? = withContext(Dispatchers.IO) {
+        return@withContext try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                val contentResolver = application.contentResolver
+                MediaStore.createDeleteRequest(contentResolver, listOf(uri))
+            } else {
+                null // For older versions, handle differently
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to create delete request", e)
+            null
         }
     }
 }

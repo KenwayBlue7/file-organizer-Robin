@@ -23,6 +23,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -49,6 +50,7 @@ import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
 import coil.compose.AsyncImage
 import com.kenway.robin.viewmodel.OrganizerViewModel
+import com.kenway.robin.viewmodel.SharedViewModel
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 
@@ -57,12 +59,23 @@ private const val TAG = "OrganizerScreen"
 @Composable
 fun OrganizerScreen(
     viewModel: OrganizerViewModel,
-    navController: NavController
+    navController: NavController,
+    sharedViewModel: SharedViewModel, // Add this parameter
+    onOpenFolderPicker: () -> Unit // Add this parameter
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val existingTags by viewModel.existingTags.collectAsState()
     var showConfirmationDialog by remember { mutableStateOf(false) }
+    var showCompletionDialog by remember { mutableStateOf(false) }
+    var showOrganizeAnotherDialog by remember { mutableStateOf(false) }
     val coroutineScope = rememberCoroutineScope()
+
+    // Watch for session completion
+    LaunchedEffect(uiState.isComplete) {
+        if (uiState.isComplete) {
+            showCompletionDialog = true
+        }
+    }
 
     BackHandler {
         Log.d(TAG, "BackHandler triggered.")
@@ -76,6 +89,7 @@ fun OrganizerScreen(
         }
     }
 
+    // Back-press confirmation dialog
     if (showConfirmationDialog) {
         AlertDialog(
             onDismissRequest = { showConfirmationDialog = false },
@@ -105,6 +119,65 @@ fun OrganizerScreen(
         )
     }
 
+    // Session completion dialog
+    if (showCompletionDialog) {
+        AlertDialog(
+            onDismissRequest = { /* Don't allow dismissing by tapping outside */ },
+            title = { Text("Session Complete!") },
+            text = { Text("Save your changes?") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showCompletionDialog = false
+                    coroutineScope.launch {
+                        viewModel.finalizeSession()
+                        navController.previousBackStackEntry?.savedStateHandle?.set("session_saved", true)
+                        navController.popBackStack()
+                    }
+                }) {
+                    Text("Save")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    showCompletionDialog = false
+                    showOrganizeAnotherDialog = true
+                }) {
+                    Text("Discard")
+                }
+            }
+        )
+    }
+
+    // Organize another folder dialog
+    if (showOrganizeAnotherDialog) {
+        AlertDialog(
+            onDismissRequest = { /* Don't allow dismissing by tapping outside */ },
+            title = { Text("Organize another folder?") },
+            text = { Text("Would you like to organize another folder?") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showOrganizeAnotherDialog = false
+                    // Clear the previous folder selection
+                    sharedViewModel.clearSelectedFolder()
+                    // Navigate back to dashboard first
+                    navController.popBackStack()
+                    // Then trigger folder picker
+                    onOpenFolderPicker()
+                }) {
+                    Text("Yes")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    showOrganizeAnotherDialog = false
+                    navController.popBackStack()
+                }) {
+                    Text("No")
+                }
+            }
+        )
+    }
+
     if (uiState.showTagDialog) {
         TagSelectionDialog(
             existingTags = existingTags,
@@ -124,11 +197,32 @@ fun OrganizerScreen(
         modifier = Modifier.fillMaxSize(),
         contentAlignment = Alignment.Center
     ) {
+        // Add LinearProgressIndicator at the top
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(top = 16.dp, start = 16.dp, end = 16.dp),
+            contentAlignment = Alignment.TopCenter
+        ) {
+            // Calculate progress: (tagged + deleted) / total images
+            val progress = if (uiState.images.isNotEmpty()) {
+                val processedCount = uiState.sessionTaggedUris.size + uiState.sessionDeletedUris.size
+                processedCount.toFloat() / uiState.images.size.toFloat()
+            } else {
+                0f
+            }
+            
+            androidx.compose.material3.LinearProgressIndicator(
+                progress = { progress },
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+
         when {
             uiState.errorMessage != null -> {
                 Text("Error: ${uiState.errorMessage}")
             }
-            uiState.isComplete -> {
+            uiState.isComplete && !showCompletionDialog && !showOrganizeAnotherDialog -> {
                 Text("Session Complete!")
             }
             uiState.isLoading -> {
@@ -200,20 +294,21 @@ private fun OrganizerPager(
 
             var scale by remember { mutableStateOf(1f) }
             var offset by remember { mutableStateOf(Offset.Zero) }
+            var isInZoomMode by remember { mutableStateOf(false) }
 
             // Reset state when the page is changed
             LaunchedEffect(pagerState.currentPage) {
                 if (pagerState.currentPage != page) {
                     scale = 1f
                     offset = Offset.Zero
+                    isInZoomMode = false
                 }
             }
 
             Box(modifier = Modifier.fillMaxSize()) {
                 AsyncImage(
                     model = imageUri,
-                    contentDescription = "Image to organize",
-                    contentScale = ContentScale.Fit,
+                    contentDescription = "Image $page",
                     modifier = Modifier
                         .fillMaxSize()
                         .graphicsLayer(
@@ -223,74 +318,43 @@ private fun OrganizerPager(
                             translationY = offset.y
                         )
                         .pointerInput(Unit) {
-                            // This detector handles single taps, double taps, and long presses.
                             detectTapGestures(
                                 onTap = {
-                                    Log.d(TAG, "Single tap detected (Quick Tag).")
-                                    hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
-                                    viewModel.onQuickTag()
-                                },
-                                onDoubleTap = {
-                                    Log.d(TAG, "Double tap detected (Zoom).")
-                                    scale = if (scale > 1f) 1f else 3f
-                                    offset = Offset.Zero // Reset pan on zoom toggle
-                                    hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
-                                },
-                                onLongPress = {
-                                    Log.d(TAG, "Long press detected (Open Tag Dialog).")
                                     hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
                                     viewModel.openTagDialog()
                                 }
                             )
                         }
                         .pointerInput(Unit) {
-                            // This detector handles pinch-to-zoom and panning when the image is zoomed in.
                             detectTransformGestures { _, pan, zoom, _ ->
-                                if (scale > 1f) {
-                                    scale = (scale * zoom).coerceIn(1f, 5f)
-
-                                    // Calculate bounds to prevent panning image out of view
-                                    val maxOffsetX = (size.width * (scale - 1)) / 2
-                                    val maxOffsetY = (size.height * (scale - 1)) / 2
-
-                                    val newOffset = offset + pan
-                                    offset = Offset(
-                                        x = newOffset.x.coerceIn(-maxOffsetX, maxOffsetX),
-                                        y = newOffset.y.coerceIn(-maxOffsetY, maxOffsetY)
-                                    )
+                                scale = (scale * zoom).coerceIn(1f, 3f)
+                                if (scale == 1f) {
+                                    offset = Offset.Zero
+                                    isInZoomMode = false
+                                } else {
+                                    isInZoomMode = true
+                                    offset += pan
                                 }
                             }
                         }
                         .pointerInput(Unit) {
-                            // This detector handles the vertical swipe-up gesture for deletion when not zoomed.
-                            var totalDrag = 0f
                             detectVerticalDragGestures(
-                                onDragStart = {
-                                    if (scale == 1f) {
-                                        totalDrag = 0f
-                                        Log.d(TAG, "Vertical drag started.")
-                                    }
-                                },
+                                onDragStart = { },
                                 onDragEnd = {
-                                    if (scale == 1f) {
-                                        val swipeThreshold = 200
-                                        Log.d(TAG, "Vertical drag ended. Total drag: $totalDrag")
-                                        // A negative value means swiping up (deleting)
-                                        if (totalDrag < -swipeThreshold) {
-                                            Log.d(TAG, "Swipe Up detected.")
-                                            hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    if (!isInZoomMode && abs(offset.y) > 100) {
+                                        if (offset.y < 0) {
                                             viewModel.onSwipeUp()
                                         }
                                     }
-                                },
-                                onVerticalDrag = { change, dragAmount ->
-                                    if (scale == 1f) {
-                                        change.consume()
-                                        totalDrag += dragAmount
-                                    }
+                                    offset = Offset.Zero
                                 }
-                            )
-                        }
+                            ) { _, dragAmount ->
+                                if (!isInZoomMode) {
+                                    offset = Offset(0f, offset.y + dragAmount)
+                                }
+                            }
+                        },
+                    contentScale = ContentScale.Fit
                 )
 
                 val status = uiState.imageStatusMap[imageUri]
@@ -298,29 +362,50 @@ private fun OrganizerPager(
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            .background(Color.Black.copy(alpha = 0.5f)),
-                        contentAlignment = Alignment.Center
+                            .padding(16.dp),
+                        contentAlignment = Alignment.TopEnd
                     ) {
                         Text(
                             text = status,
                             color = Color.White,
-                            fontSize = 32.sp,
-                            fontWeight = FontWeight.Bold
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier
+                                .background(
+                                    color = when (status) {
+                                        "Tagged" -> Color.Green.copy(alpha = 0.8f)
+                                        "Deleted" -> Color.Red.copy(alpha = 0.8f)
+                                        else -> Color.Gray.copy(alpha = 0.8f)
+                                    },
+                                    shape = CircleShape
+                                )
+                                .padding(horizontal = 12.dp, vertical = 6.dp)
                         )
                     }
                 }
 
                 // Add the Edit button for tagged images
                 if (imageUri in uiState.sessionTaggedUris) {
-                    IconButton(
-                        onClick = { viewModel.openTagDialog() },
-                        modifier = Modifier.align(Alignment.TopEnd)
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(16.dp),
+                        contentAlignment = Alignment.TopStart
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.Edit,
-                            contentDescription = "Edit Tag",
-                            tint = Color.White
-                        )
+                        IconButton(
+                            onClick = { viewModel.openTagDialog() },
+                            modifier = Modifier
+                                .background(
+                                    color = MaterialTheme.colorScheme.primary,
+                                    shape = CircleShape
+                                )
+                        ) {
+                            Icon(
+                                Icons.Default.Edit,
+                                contentDescription = "Edit Tag",
+                                tint = Color.White
+                            )
+                        }
                     }
                 }
             }
