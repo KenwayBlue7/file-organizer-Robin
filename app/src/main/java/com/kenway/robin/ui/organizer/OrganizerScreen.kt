@@ -311,49 +311,62 @@ private fun OrganizerPager(
                     contentDescription = "Image $page",
                     modifier = Modifier
                         .fillMaxSize()
+                        .pointerInput(isInZoomMode) {
+                            detectTapGestures(
+                                onTap = {
+                                    if (!isInZoomMode) {
+                                        viewModel.onQuickTag() // Changed from onTagWithPrevious()
+                                    }
+                                },
+                                onDoubleTap = {
+                                    isInZoomMode = !isInZoomMode
+                                    if (isInZoomMode) {
+                                        // Zoom in to 3x when entering zoom mode
+                                        scale = 3f
+                                    } else {
+                                        // Reset scale and offset when exiting zoom mode
+                                        scale = 1f
+                                        offset = Offset.Zero
+                                    }
+                                },
+                                onLongPress = {
+                                    // Only handle long press when not in zoom mode
+                                    if (!isInZoomMode) {
+                                        hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        viewModel.openTagDialog()
+                                    }
+                                }
+                            )
+                        }
+                        .pointerInput(isInZoomMode) {
+                            if (isInZoomMode) {
+                                // Pinch-to-zoom and pan gestures (only in zoom mode)
+                                detectTransformGestures { _, pan, zoom, _ ->
+                                    scale = (scale * zoom).coerceIn(1f, 3f)
+                                    offset += pan
+                                }
+                            } else {
+                                // Vertical swipe gesture (only when not in zoom mode)
+                                var dragOffset = Offset.Zero
+                                detectVerticalDragGestures(
+                                    onDragEnd = {
+                                        if (abs(dragOffset.y) > 100) {
+                                            if (dragOffset.y < 0) { // Swiped up
+                                                viewModel.onSwipeUp()
+                                            }
+                                        }
+                                    }
+                                ) { _, dragAmount ->
+                                    dragOffset = Offset(0f, dragOffset.y + dragAmount)
+                                }
+                            }
+                        }
                         .graphicsLayer(
                             scaleX = scale,
                             scaleY = scale,
                             translationX = offset.x,
                             translationY = offset.y
-                        )
-                        .pointerInput(Unit) {
-                            detectTapGestures(
-                                onTap = {
-                                    hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
-                                    viewModel.openTagDialog()
-                                }
-                            )
-                        }
-                        .pointerInput(Unit) {
-                            detectTransformGestures { _, pan, zoom, _ ->
-                                scale = (scale * zoom).coerceIn(1f, 3f)
-                                if (scale == 1f) {
-                                    offset = Offset.Zero
-                                    isInZoomMode = false
-                                } else {
-                                    isInZoomMode = true
-                                    offset += pan
-                                }
-                            }
-                        }
-                        .pointerInput(Unit) {
-                            detectVerticalDragGestures(
-                                onDragStart = { },
-                                onDragEnd = {
-                                    if (!isInZoomMode && abs(offset.y) > 100) {
-                                        if (offset.y < 0) {
-                                            viewModel.onSwipeUp()
-                                        }
-                                    }
-                                    offset = Offset.Zero
-                                }
-                            ) { _, dragAmount ->
-                                if (!isInZoomMode) {
-                                    offset = Offset(0f, offset.y + dragAmount)
-                                }
-                            }
-                        },
+                        ),
                     contentScale = ContentScale.Fit
                 )
 
