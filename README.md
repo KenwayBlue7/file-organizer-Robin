@@ -28,10 +28,6 @@ Robin is an intelligent Android application designed to help users organize thei
 - **Intuitive Navigation**: Easy-to-use navigation between different sections
 - **Responsive Layout**: Optimized for different screen sizes
 
-## Screenshots
-
-*Add your app screenshots here*
-
 ## Technology Stack
 
 ### Frontend
@@ -78,7 +74,7 @@ The app requires the following permissions:
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/yourusername/robin.git
+   git clone https://github.com/KenwayBlue7/file-organizer-Robin.git
    cd robin
    ```
 
@@ -187,16 +183,6 @@ If you encounter any issues or have questions:
 - Create an issue on GitHub
 - Check existing issues for solutions
 - Review the documentation
-
-## Roadmap
-
-### Upcoming Features
-- [ ] Cloud backup integration
-- [ ] Advanced photo tagging with AI
-- [ ] Batch photo editing capabilities
-- [ ] Export/import organization settings
-- [ ] Photo metadata editing
-- [ ] Advanced search and filtering
 
 ### Version History
 - **v1.0.0** - Initial release with core functionality
